@@ -1,0 +1,20 @@
+name: 'Check OSS history'
+description: 'Check structure of downstream commits in an OSS based NCS repository'
+inputs:
+  workspace:
+    description: 'where the uninitialized workspace with an nrf dir is'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - id: setup-python
+      run: |
+        pip3 install setuptools wheel
+        pip3 install -r ${{ github.action_path }}/requirements.txt
+      shell: bash
+    - id: run-python
+      run: |
+           python3 ${{ github.action_path }}/action.py \
+               --workspace "${{ inputs.workspace }}" \
+      shell: bash
