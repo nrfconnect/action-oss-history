@@ -59,9 +59,6 @@ PARSER.add_argument('--workspace', type=Path,
 
 ARGS = None                     # global arguments, see parse_args()
 
-UPSTREAM_ZEPHYR = 'https://github.com/zephyrproject-rtos/zephyr'
-SDK_NRF = 'https://github.com/nrfconnect/sdk-nrf'
-
 def stdout(*msg):
     # Print a diagnostic message to standard error.
 
@@ -102,58 +99,18 @@ def runc_out(cmd, **kwargs):
     cp = subprocess.run(ssplit(cmd), **kwargs)
     return cp.stdout
 
-def prepare_workspace():
-    # Update the workspace from the sdk-nrf pull request we're checking.
-
-    stdout('-------------------- preparing the workspace --------------------')
-
-    nrf = ARGS.workspace / 'nrf'
-    with open(os.environ['GITHUB_EVENT_PATH'], 'r') as f:
-        pr_num = json.load(f)['pull_request']['number']
-
-    stdout(f'checking sdk-nrf commit at tip of sdk-nrf PR #{pr_num}')
-    stdout(f'sdk-nrf commit to be merged into: {os.environ["GITHUB_SHA"]}')
-    stdout(f'updating zephyr in workspace to match sdk-nrf PR #{pr_num}...')
-    runc(f'west init -l {nrf}')
-    runc('west update zephyr',
-         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-         cwd=nrf)
-    stdout('workspace is prepared')
-
-def ensure_zephyr_upstream_remote():
-    # Ensure the zephyr repository has an 'upstream' remote with
-    # the right URL.
-
-    stdout('-------------- ensuring zephyr remote "upstream" ----------------')
-
-    added_upstream_remote = False
-    zephyr = ARGS.workspace / 'zephyr'
-    stdout(f'zephyr is in: {zephyr}')
-    try:
-        upstream_url = runc_out('git remote get-url upstream',
-                                cwd=zephyr).strip()
-    except subprocess.CalledProcessError:
-        stdout('no such remote; adding it')
-        runc(f'git remote add upstream {UPSTREAM_ZEPHYR}', cwd=zephyr)
-        added_upstream_remote = True
-
-    if not added_upstream_remote:
-        if upstream_url != UPSTREAM_ZEPHYR:
-            sys.exit(f"zephyr's \"upstream\" remote URL is {upstream_url}; "
-                     f"this should be {UPSTREAM_ZEPHYR}")
-
-    stdout('zephyr "upstream" remote is OK')
-
 def get_zephyr_merge_base():
     # Get the SHA of the upstream zephyr commit which is the
     # merge-base with the current sdk-zephyr HEAD.
+    #
+    # The zephyr repository must have an 'upstream' remote.
 
     stdout('------------------- finding zephyr merge base -------------------')
 
     zephyr = ARGS.workspace / 'zephyr'
 
     stdout('finding upstream zephyr main branch...')
-    main_branch = get_head_branch(UPSTREAM_ZEPHYR)
+    main_branch = get_head_branch('https://github.com/zephyrproject-rtos/zephyr')
     stdout(f'upstream zephyr main branch: {main_branch}')
 
     stdout('converting to SHA...')
@@ -307,9 +264,6 @@ def check_zephyr_rewrite(before_sha, new_ref):
 
 def main():
     parse_args()
-
-    prepare_workspace()
-    ensure_zephyr_upstream_remote()
     zephyr_merge_base = get_zephyr_merge_base()
     oot_zephyr_patches = get_oot_zephyr_patches(zephyr_merge_base)
     before_sha, rebase_ref = rewrite_zephyr_history(zephyr_merge_base,
