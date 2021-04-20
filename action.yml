@@ -1,4 +1,4 @@
-name: 'Check OSS history'
+name: 'OSS history'
 description: 'Check structure of downstream commits in an OSS based NCS repository'
 inputs:
   workspace:

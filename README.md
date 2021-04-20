@@ -1,4 +1,4 @@
-# action-check-oss-history
+# oss-history
 
 This repository contains a GitHub action implemented in Python to partially
 automate [west](https://docs.zephyrproject.org/latest/guides/west/index.html)-based

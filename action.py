@@ -21,7 +21,7 @@ import tempfile
 # - Python 3.7 or later on Windows (some os.PathLike features didn't
 #   make it into 3.6 for Windows)
 
-PROG = 'check-oss-history'
+PROG = 'oss-history'
 
 PARSER = argparse.ArgumentParser(
     prog=PROG,
@@ -191,7 +191,7 @@ def rewrite_zephyr_history(zephyr_merge_base, oot_zephyr_patches):
     stdout(f'zephyr SHA in sdk-nrf PR manifest is {before_sha}')
 
     stdout(f'creating rewritten zephyr history on top of {zephyr_merge_base}')
-    runc('git config user.name check-oss-history', cwd=zephyr)
+    runc('git config user.name oss-history', cwd=zephyr)
     runc('git config user.email bot', cwd=zephyr)
     runc(f'git checkout {zephyr_merge_base}', cwd=zephyr)
     runc('git status', cwd=zephyr)
