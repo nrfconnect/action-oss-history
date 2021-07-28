@@ -27,7 +27,11 @@ import tempfile
 # Every project in this list will have its downstream history checked
 # by default when run as a GitHub action. You can override this
 # at the command line.
-DEFAULT_PROJECTS_TO_CHECK = ['zephyr']
+DEFAULT_PROJECTS_TO_CHECK = [
+    'zephyr',
+    'mcuboot',
+    'trusted-firmware-m'
+]
 
 PROG = 'oss-history'
 
