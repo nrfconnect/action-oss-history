@@ -4,11 +4,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # standard library imports only here
+from typing import Dict, List
 from pathlib import Path
 import argparse
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,43 +23,56 @@ import tempfile
 # - Python 3.7 or later on Windows (some os.PathLike features didn't
 #   make it into 3.6 for Windows)
 
+# Extend this list of nrf/west.yml project names as necessary.
+# Every project in this list will have its downstream history checked
+# by default when run as a GitHub action. You can override this
+# at the command line.
+DEFAULT_PROJECTS_TO_CHECK = ['zephyr']
+
 PROG = 'oss-history'
+
+ZEPHYR_URL = 'https://github.com/zephyrproject-rtos/zephyr'
 
 PARSER = argparse.ArgumentParser(
     prog=PROG,
     formatter_class=argparse.RawDescriptionHelpFormatter,
-    description='''\
-Checks that an sdk-nrf pull request which touches sdk-zephyr
-has good structure.
+    description=f'''\
+Checks that an sdk-nrf west.yml has "rebasable" history
+in its open source software (OSS) repositories.
 
-WARNING: commit any local work and ensure a clean workspace before
-         running this script.
-
-"Good structure" currently means that the sdk-zephyr changes are
-"rebasable", i.e. that:
+"Rebasable" history means:
 
 1. The history can be rewritten into a linear series of commits onto
-   the upstream merge-base using NCS tools like "west ncs-loot".
-   (Note that this doesn't actually use "git rebase".)
+   the upstream merge-base from zephyr/west.yml using the output of
+   NCS extension command "west ncs-loot".
 
-2. The rewritten history has an empty diff with the sdk-zephyr
-   revision in the sdk-nrf pull request.
+   Note that this doesn't actually use "git rebase".
 
-This script changes local git repositories as follows:
+2. The rewritten history has an empty diff with whatever
+   revision is in the sdk-nrf pull request.
 
-- the workspace is updated to match nrf/west.yml
-- sdk-zephyr: upstream master is fetched into refs/remotes/upstream/master,
-  and an attempt is made to leave a rewritten history in the working tree
+This script fetches {ZEPHYR_URL}.
+This is left in FETCH_HEAD in the zephyr repository.
 
-Commits with rewritten history are left as loose objects.
-Feel free to delete these afterwards.
+To check history, this script clones local git repositories as needed
+into an 'oss-history' subdirectory of the workspace. The history is
+rewritten in the clone, so your working trees are not affected.
+
+The rewritten history is left as a detached HEAD in the clone under
+'oss-history'. Feel free to delete this directory afterwards.
 ''')
-PARSER.add_argument('--workspace', type=Path,
-                    help='''where NCS workspace topdir should be;
-                    the nrf repo should already be here''',
-                    required=True)
+PARSER.add_argument('-w', '--workspace', type=Path, required=True,
+                    help='NCS workspace topdir')
+PARSER.add_argument('-p', '--project', dest='projects', action='append',
+                    help='project to check; may be given multiple times')
+PARSER.add_argument('-f', '--force', action='store_true',
+                    help=f'''delete any repositories under <workspace>/{PROG}
+                    that already exist''')
 
 ARGS = None                     # global arguments, see parse_args()
+
+# Type for git SHAs, for readability. Just a string.
+Sha = str
 
 def stdout(*msg):
     # Print a diagnostic message to standard error.
@@ -83,7 +98,7 @@ def ssplit(cmd):
 
 def runc(cmd, **kwargs):
     # A shorthand for running a simple shell command.
-    cwd = kwargs.get('cwd', os.getcwd())
+    cwd = os.fspath(kwargs.get('cwd', os.getcwd()))
     stdout(f'running "{cmd}" in "{cwd}"')
     kwargs['check'] = True
     return subprocess.run(ssplit(cmd), **kwargs)
@@ -99,29 +114,28 @@ def runc_out(cmd, **kwargs):
     cp = subprocess.run(ssplit(cmd), **kwargs)
     return cp.stdout
 
-def get_zephyr_merge_base():
-    # Get the SHA of the upstream zephyr commit which is the
-    # merge-base with the current sdk-zephyr HEAD.
-    #
-    # The zephyr repository must have an 'upstream' remote.
+def get_merge_base(path, upstream_url, branch=None):
+    # Get the SHA of the tip commit in 'branch' from 'upstream_url'
+    # which is the merge-base with the current HEAD in the repository
+    # at 'path'.
 
-    stdout('------------------- finding zephyr merge base -------------------')
+    stdout('-' * 79)
+    stdout(f'{path}: getting upstream merge base from {upstream_url}')
 
-    zephyr = ARGS.workspace / 'zephyr'
+    if branch is None:
+        stdout(f'getting upstream main branch...')
+        branch = get_head_branch(upstream_url)
+        stdout(f'upstream main branch: {branch}')
 
-    stdout('finding upstream zephyr main branch...')
-    main_branch = get_head_branch('https://github.com/zephyrproject-rtos/zephyr')
-    stdout(f'upstream zephyr main branch: {main_branch}')
-
-    stdout('converting to SHA...')
-    runc(f'git fetch -q upstream {main_branch}', cwd=zephyr)
-    upstream_sha = runc_out('git rev-parse FETCH_HEAD', cwd=zephyr).strip()
-    stdout(f'upstream/{main_branch} is at {upstream_sha}')
+    stdout(f'converting branch "{branch}" to SHA...')
+    runc(f'git fetch {upstream_url} {branch}', cwd=path)
+    upstream_sha = runc_out('git rev-parse FETCH_HEAD', cwd=path).strip()
+    stdout(f'branch "{branch}" is at commit {upstream_sha}')
 
     stdout('finding merge-base...')
     merge_base = runc_out(f'git merge-base HEAD {upstream_sha}',
-                          cwd=zephyr).strip()
-    stdout(f"zephyr merge-base is {merge_base}")
+                          cwd=path).strip()
+    stdout(f'the merge-base is {merge_base}')
 
     return merge_base
 
@@ -151,93 +165,99 @@ def get_head_branch(url: str) -> str:
     # Unexpected output.
     raise RuntimeError(output)
 
-def get_oot_zephyr_patches(zephyr_merge_base):
-    # Print the OOT zephyr patches to the console and return a list of
-    # their SHAs.
+def get_ncs_loot(zephyr_rev: Sha, projects: List[str]) -> Dict[str, Dict]:
+    # - zephyr_rev: zephyr revision to pass to west ncs-loot
+    # - projects: list of project names whose loot to get
+    #
+    # Returns the 'west ncs-loot' output for those projects as a
+    # parsed JSON object. The keys in the return value are the project
+    # names.
 
-    stdout('------------------ getting OOT zephyr patches -------------------')
+    stdout('-' * 79)
+    stdout('getting out of tree commit info using west ncs-loot')
 
     fd, json_tmp = tempfile.mkstemp(prefix=f'{PROG}-', suffix='.json')
     os.close(fd)
 
     try:
-        stdout("getting out of tree zephyr patches:")
-        runc(f'west ncs-loot --zephyr-rev {zephyr_merge_base} '
-             f'--json {json_tmp} zephyr', stdout=subprocess.DEVNULL,
-             stderr=subprocess.DEVNULL, cwd=ARGS.workspace)
+        runc('west ncs-loot '
+             f'--zephyr-rev {zephyr_rev} '
+             f'--json {json_tmp} ' +
+             ' '.join(projects),
+             cwd=ARGS.workspace)
         with open(json_tmp, 'r') as f:
             json_output = json.load(f)
     finally:
         os.unlink(json_tmp)
 
-    shas, shortlogs = (json_output['zephyr']['shas'],
-                       json_output['zephyr']['shortlogs'])
+    return json_output
 
-    stdout("out of tree zephyr patches:")
-    for sha, shortlog in zip(shas, shortlogs):
-        stdout(f'- {sha} {shortlog}')
+def synchronize_into(project_name, from_path, to_path):
+    # Clone 'from_path' into 'to_path', deleting 'to_path' first
+    # if it doesn't exist.
 
-    return shas
+    stdout(f'cloning {project_name} into {to_path}')
 
-def rewrite_zephyr_history(zephyr_merge_base, oot_zephyr_patches):
-    # Create a rewritten zephyr history on top of zephyr_merge_base
-    # which cherry-picks the given oot_zephyr_patches.
+    if to_path.exists():
+        if not ARGS.force:
+            sys.exit(f'error: path exists: {to_path}.\n'
+                     f'Remove {to_path.parent}, or use --force.')
+        else:
+            shutil.rmtree(to_path.parent)
 
-    stdout('--------------- trying to rewrite zephyr history ----------------')
+    runc(f'git clone {from_path} {to_path}')
 
-    zephyr = ARGS.workspace / 'zephyr'
+def rewrite_history(path: Path, base_commit: Sha, patches: List[Sha]):
+    # Create a rewritten history in the git repository at 'path',
+    # cherry-picking 'patches' on top of 'base_commit'.
 
-    before_sha = runc_out('west list -f {sha} zephyr', cwd=zephyr).strip()
-    stdout(f'zephyr SHA in sdk-nrf PR manifest is {before_sha}')
+    stdout(f'rewriting history in {path} onto {base_commit}')
 
-    stdout(f'creating rewritten zephyr history on top of {zephyr_merge_base}')
-    runc('git config user.name oss-history', cwd=zephyr)
-    runc('git config user.email bot', cwd=zephyr)
-    runc(f'git checkout {zephyr_merge_base}', cwd=zephyr)
-    runc('git status', cwd=zephyr)
-    for sha in oot_zephyr_patches:
+    runc('git config user.name oss-history', cwd=path)
+    runc('git config user.email bot', cwd=path)
+    runc(f'git checkout {base_commit}', cwd=path)
+    runc('git status', cwd=path)
+
+    for sha in patches:
         try:
-            runc(f'git cherry-pick -x {sha}', cwd=zephyr)
+            runc(f'git cherry-pick -x {sha}', cwd=path)
         except subprocess.CalledProcessError as e:
             stdout(f'cherry-pick failed: {e}')
 
             stdout(f'checking if {sha} is a redundant commit...')
-            runc('git cherry-pick --abort', cwd=zephyr)
+            runc('git cherry-pick --abort', cwd=path)
             try:
                 runc(f'git cherry-pick --keep-redundant-commits -x {sha}',
-                     cwd=zephyr)
+                     cwd=path)
             except subprocess.CalledProcessError:
                 stdout(f'{sha} is not a redundant commit; something is wrong '
-                       'with either the sdk-zephyr changes or current downstream '
-                       'history is malformed')
+                       'with either the patches to apply or current history')
             else:
                 stdout(f'{sha} is a redundant commit; do you need to revert '
                        'it before creating the [nrf mergeup] commit?')
 
             sys.exit(1)
 
-    rebase_ref = runc_out('git rev-parse HEAD', cwd=zephyr).strip()
-    stdout(f'leaving rewritten history HEAD ({rebase_ref}) '
-           'in the working tree')
+    rewrite_sha = runc_out('git rev-parse HEAD', cwd=path).strip()
+    stdout(f'leaving rewritten history in the working tree at {rewrite_sha}')
 
-    return before_sha, rebase_ref
+    return rewrite_sha
 
-def check_zephyr_rewrite(before_sha, new_ref):
-    # Checks struture of the rewritten zephyr history.
+def check_history_rewrite(path: Path, before_sha: Sha, rewrite_sha: str):
+    # Checks struture of the 'rewritten' history.
 
-    stdout('------------------ checking rewritten history -------------------')
-
-    zephyr = ARGS.workspace / 'zephyr'
-
-    stdout(f'checking for empty diff in {zephyr} between {before_sha} '
-           f'and {new_ref}')
+    stdout(f'checking for empty diff between old and new history...')
     try:
-        runc(f'git diff --exit-code {before_sha} {new_ref}', cwd=zephyr)
+        runc(f'git diff --exit-code {before_sha} {rewrite_sha}', cwd=path)
     except subprocess.CalledProcessError:
         sys.exit('diff is not empty; see above')
 
+    stdout('OK! diff is empty')
+
+def all_good():
     stdout('''
-      diff is empty! all good!
+
+    All checked projects have clean history.
 
            ████
          ███ ██
@@ -264,11 +284,29 @@ def check_zephyr_rewrite(before_sha, new_ref):
 
 def main():
     parse_args()
-    zephyr_merge_base = get_zephyr_merge_base()
-    oot_zephyr_patches = get_oot_zephyr_patches(zephyr_merge_base)
-    before_sha, rebase_ref = rewrite_zephyr_history(zephyr_merge_base,
-                                                    oot_zephyr_patches)
-    check_zephyr_rewrite(before_sha, rebase_ref)
+
+    zephyr = ARGS.workspace / 'zephyr'
+    if not zephyr.is_dir():
+        sys.exit(f'zephyr {zephyr} does not exist; check workspace '
+                 f'{ARGS.workspace} ({ARGS.workspace.resolve()}), '
+                 'which contains: ' + list(ARGS.workspace.iterdir()))
+
+    zephyr_merge_base = get_merge_base(zephyr,
+                                       ZEPHYR_URL,
+                                       branch='main')
+    ncs_loot = get_ncs_loot(zephyr_merge_base,
+                            ARGS.projects or DEFAULT_PROJECTS_TO_CHECK)
+
+    for project_name, loot in ncs_loot.items():
+        stdout('-' * 79)
+        stdout(f'checking: {project_name}')
+        from_path = (ARGS.workspace / loot['path']).resolve()
+        to_path = (ARGS.workspace / 'oss-history' / project_name).resolve()
+        synchronize_into(project_name, from_path, to_path)
+        rewrite_sha = rewrite_history(to_path, loot['upstream-commit'], loot['shas'])
+        check_history_rewrite(to_path, loot['ncs-commit'], rewrite_sha)
+
+    all_good()
 
 if __name__ == '__main__':
     main()
