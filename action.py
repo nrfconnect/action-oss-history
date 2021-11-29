@@ -68,7 +68,11 @@ If you want to skip this fetch or use another merge base commit, use
 
 To check history, this script clones local git repositories as needed
 into an 'oss-history' subdirectory of the workspace. The history is
-rewritten in the clone, so your working trees are not affected.
+rewritten in the clone, so your working trees are not affected. The
+user.name and user.email git configuration variables in the clones are
+set to "oss-history" and "bot" respectively unless --no-user-config is
+given, to avoid issues in action environments where these variables
+are typically not set.
 
 The rewritten history is left as a detached HEAD in the clone under
 'oss-history'. Feel free to delete this directory afterwards.
@@ -81,6 +85,9 @@ PARSER.add_argument('-f', '--force', action='store_true',
                     help=f'''delete any repositories under <workspace>/{PROG}
                     that already exist''')
 PARSER.add_argument('-z', '--zephyr-merge-base', metavar='REF',
+                    help='''zephyr git ref (commit, branch, etc.)
+                    to use as a merge-base; default fetches from upstream''')
+PARSER.add_argument('--no-user-config', action='store_true',
                     help='''zephyr git ref (commit, branch, etc.)
                     to use as a merge-base; default fetches from upstream''')
 
@@ -227,9 +234,6 @@ def rewrite_history(path: Path, base_commit: Sha, patches: List[Sha]):
     # cherry-picking 'patches' on top of 'base_commit'.
 
     stdout(f'rewriting history in {path} onto {base_commit}')
-
-    runc('git config user.name oss-history', cwd=path)
-    runc('git config user.email bot', cwd=path)
     runc(f'git checkout {base_commit}', cwd=path)
     runc('git status', cwd=path)
 
@@ -321,6 +325,10 @@ def main():
         from_path = (ARGS.workspace / loot['path']).resolve()
         to_path = (ARGS.workspace / 'oss-history' / project_name).resolve()
         synchronize_into(project_name, from_path, to_path)
+        if not ARGS.no_user_config:
+            stdout(f'overriding user configs in {to_path}')
+            runc('git config user.name oss-history', cwd=to_path)
+            runc('git config user.email bot', cwd=to_path)
         rewrite_sha = rewrite_history(to_path, loot['upstream-commit'], loot['shas'])
         check_history_rewrite(to_path, loot['ncs-commit'], rewrite_sha)
 
