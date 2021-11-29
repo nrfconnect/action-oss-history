@@ -90,6 +90,8 @@ PARSER.add_argument('-z', '--zephyr-merge-base', metavar='REF',
 PARSER.add_argument('--no-user-config', action='store_true',
                     help='''zephyr git ref (commit, branch, etc.)
                     to use as a merge-base; default fetches from upstream''')
+PARSER.add_argument('--quiet-subprocesses', action='store_true',
+                    help='silence output related to running subprocesses')
 
 ARGS = None                     # global arguments, see parse_args()
 
@@ -120,19 +122,31 @@ def ssplit(cmd):
 
 def runc(cmd, **kwargs):
     # A shorthand for running a simple shell command.
+
     cwd = os.fspath(kwargs.get('cwd', os.getcwd()))
-    stdout(f'running "{cmd}" in "{cwd}"')
+
+    if ARGS.quiet_subprocesses:
+        kwargs['stdout'] = subprocess.DEVNULL
+        kwargs['stderr'] = subprocess.DEVNULL
+    else:
+        stdout(f'running "{cmd}" in "{cwd}"')
+
     kwargs['check'] = True
     return subprocess.run(ssplit(cmd), **kwargs)
 
 def runc_out(cmd, **kwargs):
     # A shorthand for running a simple shell command and getting its output.
 
-    kwargs['check'] = True
-    kwargs['stdout'] = subprocess.PIPE
-    kwargs['universal_newlines'] = True
     cwd = kwargs.get('cwd', os.getcwd())
-    stdout(f'running "{cmd}" in "{cwd}"')
+
+    if ARGS.quiet_subprocesses:
+        kwargs['stderr'] = subprocess.DEVNULL
+    else:
+        stdout(f'running "{cmd}" in "{cwd}"')
+
+    kwargs['check'] = True
+    kwargs['universal_newlines'] = True
+    kwargs['stdout'] = subprocess.PIPE
     cp = subprocess.run(ssplit(cmd), **kwargs)
     return cp.stdout
 
