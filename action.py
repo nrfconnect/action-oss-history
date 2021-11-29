@@ -55,8 +55,16 @@ in its open source software (OSS) repositories.
 2. The rewritten history has an empty diff with whatever
    revision is in the sdk-nrf pull request.
 
-This script fetches {ZEPHYR_URL}.
-This is left in FETCH_HEAD in the zephyr repository.
+By default, this script fetches the latest upstream commit 'C'
+from {ZEPHYR_URL}.
+(This is left in FETCH_HEAD in the zephyr repository.)
+The 'git merge-base' of the current sdk-zephyr revision and 'C' is used
+as a "target" commit to rebase zephyr history on top of. The project
+revisions in zephyr/west.yml at this target commit are used to rebase
+the history of other projects.
+
+If you want to skip this fetch or use another merge base commit, use
+--zephyr-merge-base to set it manually.
 
 To check history, this script clones local git repositories as needed
 into an 'oss-history' subdirectory of the workspace. The history is
@@ -72,6 +80,9 @@ PARSER.add_argument('-p', '--project', dest='projects', action='append',
 PARSER.add_argument('-f', '--force', action='store_true',
                     help=f'''delete any repositories under <workspace>/{PROG}
                     that already exist''')
+PARSER.add_argument('-z', '--zephyr-merge-base', metavar='REF',
+                    help='''zephyr git ref (commit, branch, etc.)
+                    to use as a merge-base; default fetches from upstream''')
 
 ARGS = None                     # global arguments, see parse_args()
 
@@ -295,9 +306,12 @@ def main():
                  f'{ARGS.workspace} ({ARGS.workspace.resolve()}), '
                  'which contains: ' + list(ARGS.workspace.iterdir()))
 
-    zephyr_merge_base = get_merge_base(zephyr,
-                                       ZEPHYR_URL,
-                                       branch='main')
+    if ARGS.zephyr_merge_base is not None:
+        zephyr_merge_base = ARGS.zephyr_merge_base
+    else:
+        zephyr_merge_base = get_merge_base(zephyr,
+                                           ZEPHYR_URL,
+                                           branch='main')
     ncs_loot = get_ncs_loot(zephyr_merge_base,
                             ARGS.projects or DEFAULT_PROJECTS_TO_CHECK)
 
