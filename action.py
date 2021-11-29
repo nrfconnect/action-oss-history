@@ -44,7 +44,27 @@ PARSER = argparse.ArgumentParser(
 Checks that an sdk-nrf west.yml has "rebasable" history
 in its open source software (OSS) repositories.
 
-"Rebasable" history means:
+Rebasing OSS trees
+------------------
+
+To run this manually to rebase the workspace during a release,
+do something like this:
+
+  python3 action.py -w ~/ncs --no-user-config --quiet-subprocesses
+
+Notes:
+
+- Repositories we do not fork from zephyr/west.yml cannot be rebased
+  in this way. Do these by hand.
+
+- If sdk-zephyr history is based on a branch other than 'main', add
+  '--zephyr-merge-base X', where 'X' is the latest upstream zephyr commit
+  in sdk-zephyr.
+
+"Rebasable" history
+-------------------
+
+This means:
 
 1. The history can be rewritten into a linear series of commits onto
    the upstream merge-base from zephyr/west.yml using the output of
@@ -54,6 +74,9 @@ in its open source software (OSS) repositories.
 
 2. The rewritten history has an empty diff with whatever
    revision is in the sdk-nrf pull request.
+
+What this script does
+---------------------
 
 By default, this script fetches the latest upstream commit 'C'
 from {ZEPHYR_URL}.
