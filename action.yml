@@ -4,6 +4,8 @@ inputs:
   workspace:
     description: 'where the uninitialized workspace with an nrf dir is'
     required: true
+  args:
+    description: 'additional arguments'
 
 runs:
   using: "composite"
@@ -11,5 +13,5 @@ runs:
     - id: run-python
       run: |
            python3 ${{ github.action_path }}/action.py \
-               --workspace "${{ inputs.workspace }}" \
+               --workspace "${{ inputs.workspace }}" ${{ inputs.args }} \
       shell: bash
