@@ -111,8 +111,8 @@ PARSER.add_argument('-z', '--zephyr-merge-base', metavar='REF',
                     help='''zephyr git ref (commit, branch, etc.)
                     to use as a merge-base; default fetches from upstream''')
 PARSER.add_argument('--no-user-config', action='store_true',
-                    help='''zephyr git ref (commit, branch, etc.)
-                    to use as a merge-base; default fetches from upstream''')
+                    help="""don't reconfigure user-specific git
+                    options in repository clones""")
 PARSER.add_argument('--quiet-subprocesses', action='store_true',
                     help='silence output related to running subprocesses')
 
