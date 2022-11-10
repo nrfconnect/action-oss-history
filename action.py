@@ -274,19 +274,57 @@ def rewrite_history(path: Path, base_commit: Sha, patches: List[Sha]):
     runc(f'git checkout {base_commit}', cwd=path)
     runc('git status', cwd=path)
 
+    # The base command to use when attempting to cherry-pick a SHA.
+    #
+    # We use the 'ours' option because it seems to help resolving
+    # problems when the same change has been applied in separate
+    # upstream and downstream commits. (In this case, 'ours' seems to
+    # be the tree we are rewriting history onto, not the tree we are
+    # rewriting history from.)
+    #
+    # Without the 'ours' option, we can get conflicts in scenarios
+    # similar to this hypothetical commit history:
+    #
+    #     M
+    #     |\
+    #     X \
+    #     |  Y
+    #     .  |
+    #     .  Z
+    #        |
+    #        .
+    #        .
+    #
+    # Above, out of tree commit X contains some of the same changes as
+    # upstream Z. Upstream commit Y provides further changes to the
+    # hunk which is touched by both X and Z.
+    #
+    # If X is not a redundant commit because it contains other changes
+    # not reflected in Z or anywhere else upstream, we have observed
+    # cases where the upmerge commit M can be resolved without
+    # conflicts, but we subsequently run into errors when
+    # cherry-picking X onto the new upstream history, due to conflicts
+    # with Y. Choosing the 'ours' merge strategy option seems to help here,
+    # and it can't result in an erroneous result from this script
+    # because we still check that the final rewritten history has no
+    # diff with the original before exiting.
+
+    CHERRY_PICK = \
+        'git cherry-pick --strategy ort --strategy-option ours -x'
+
     for sha in patches:
         try:
-            runc(f'git cherry-pick -x {sha}', cwd=path)
+            runc(f'{CHERRY_PICK} {sha}', cwd=path)
         except subprocess.CalledProcessError as e:
             stdout(f'cherry-pick failed: {e}')
 
             stdout(f'checking if {sha} is a redundant commit...')
             runc('git cherry-pick --abort', cwd=path)
             try:
-                runc(f'git cherry-pick --keep-redundant-commits -x {sha}',
+                runc(f'{CHERRY_PICK} --keep-redundant-commits {sha}',
                      cwd=path)
             except subprocess.CalledProcessError:
-                stdout(f'{sha} is not a redundant commit; something is wrong '
+                stdout(f'{sha} is not a redundant commit; something looks wrong '
                        'with either the patches to apply or current history')
             else:
                 stdout(f'{sha} is a redundant commit; do you need to revert '
