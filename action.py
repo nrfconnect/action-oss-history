@@ -252,8 +252,9 @@ def get_ncs_loot(zephyr_rev: Sha, projects: List[str]) -> Dict[str, Dict]:
     return json_output
 
 def synchronize_into(project_name, from_path, to_path):
-    # Clone 'from_path' into 'to_path', deleting 'to_path' first
-    # if it doesn't exist.
+    # Clone 'from_path' into 'to_path'. If 'to_path' exists,
+    # it is deleted it first if ARGS.force is given, but otherwise,
+    # an error is raised.
 
     stdout(f'cloning {project_name} into {to_path}')
 
