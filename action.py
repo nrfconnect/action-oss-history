@@ -29,6 +29,7 @@ import tempfile
 # at the command line.
 DEFAULT_PROJECTS_TO_CHECK = [
     'zephyr',
+    'mbedtls',
     'mcuboot',
     'trusted-firmware-m'
 ]
