@@ -399,6 +399,16 @@ def main():
     for project_name, loot in ncs_loot.items():
         stdout('-' * 79)
         stdout(f'checking: {project_name}')
+
+        for sha, shortlog in zip(loot['shas'], loot['shortlogs']):
+            if shortlog.rstrip().endswith('...'):
+                sys.exit(f'''\
+{project_name}: commit {sha} shortlog ends with "...": {shortlog}
+
+It is no longer necessary to shorten upstream shortlogs to fit inside
+line length limits. Please use the full upstream shortlog instead.
+''')
+
         from_path = (ARGS.workspace / loot['path']).resolve()
         to_path = (ARGS.workspace / 'oss-history' / project_name).resolve()
         synchronize_into(project_name, from_path, to_path)
