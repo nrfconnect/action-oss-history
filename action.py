@@ -400,13 +400,23 @@ def main():
         stdout('-' * 79)
         stdout(f'checking: {project_name}')
 
-        for sha, shortlog in zip(loot['shas'], loot['shortlogs']):
-            if shortlog.rstrip().endswith('...'):
-                sys.exit(f'''\
-{project_name}: commit {sha} shortlog ends with "...": {shortlog}
+        # Temporary compatibility layer needed to sequence changes in
+        # sdk-nrf which change 'shortlog' to 'title' to fix incorrect
+        # commit terminology. Once this script is only checking
+        # versions of sdk-nrf that generate 'titles', we can drop
+        # this, but there's no rush.
+        if 'shortlogs' in loot:
+            titles = loot['shortlogs']
+        else:
+            titles = loot['titles']
 
-It is no longer necessary to shorten upstream shortlogs to fit inside
-line length limits. Please use the full upstream shortlog instead.
+        for sha, title in zip(loot['shas'], titles):
+            if title.rstrip().endswith('...'):
+                sys.exit(f'''\
+{project_name}: commit {sha} title ends with "...": {title}
+
+It is no longer necessary to shorten upstream titles to fit inside
+line length limits. Please use the full upstream title instead.
 ''')
 
         from_path = (ARGS.workspace / loot['path']).resolve()
