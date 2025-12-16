@@ -410,15 +410,6 @@ def main():
         else:
             titles = loot['titles']
 
-        for sha, title in zip(loot['shas'], titles):
-            if title.rstrip().endswith('...'):
-                sys.exit(f'''\
-{project_name}: commit {sha} title ends with "...": {title}
-
-It is no longer necessary to shorten upstream titles to fit inside
-line length limits. Please use the full upstream title instead.
-''')
-
         from_path = (ARGS.workspace / loot['path']).resolve()
         to_path = (ARGS.workspace / 'oss-history' / project_name).resolve()
         synchronize_into(project_name, from_path, to_path)
