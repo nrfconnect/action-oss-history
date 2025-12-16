@@ -98,6 +98,10 @@ set to "oss-history" and "bot" respectively unless --no-user-config is
 given, to avoid issues in action environments where these variables
 are typically not set.
 
+By default, out of tree commits which are reverted are removed from
+the rewritten history. Use --keep-reverts to preserve the these
+commits.
+
 The rewritten history is left as a detached HEAD in the clone under
 'oss-history'. Feel free to delete this directory afterwards.
 ''')
@@ -116,6 +120,8 @@ PARSER.add_argument('--no-user-config', action='store_true',
                     options in repository clones""")
 PARSER.add_argument('--quiet-subprocesses', action='store_true',
                     help='silence output related to running subprocesses')
+PARSER.add_argument('--keep-reverts', action='store_true',
+                    help='keep reverts when rewriting history')
 
 ARGS = None                     # global arguments, see parse_args()
 
@@ -268,6 +274,51 @@ def synchronize_into(project_name, from_path, to_path):
 
     runc(f'git clone {from_path} {to_path}')
 
+def remove_reverts(titles: list[str], shas: list[str]) -> list[str]:
+    # Remove reverted commits, along with the commits which reverted them in
+    # the first place. Since they cancel out, there is no reason to keep them
+    # in history.
+    #
+    # We simply match the titles of reverting commits:
+    #
+    #    Revert "[nrf noup] bla bla bla"
+    #
+    # to the commits which where reverted:
+    #
+    #    [nrf noup] bla bla bla
+
+    stdout('removing reverts')
+
+    assert len(titles) == len(shas)
+    commits = list(reversed([(titles[i], shas[i]) for i in range(len(titles))]))
+    preserved_shas = []
+    reverted_titles_stack = []
+
+    for title, sha in commits:
+        if title in reverted_titles_stack:
+            reverted_titles_stack.remove(title)
+            continue
+
+        if title.startswith('Revert '):
+            reverted_titles_stack.append(title[8:-1])
+            continue
+
+        preserved_shas.append(sha)
+
+    if len(reverted_titles_stack):
+        for reverted_title in reverted_titles_stack:
+            stdout(f'reverted commit with title {reverted_title}'
+                   'could not be found. Is the title of the reverting commit'
+                   'correct? Is the reverting commit actually reverting the' \
+                   'commit its title references?')
+
+        sys.exit(1)
+
+    preserved_shas = list(reversed(preserved_shas))
+    removed_reverts_count = int((len(shas) - len(preserved_shas)) / 2)
+    stdout(f'removed {removed_reverts_count} revert(s)')
+    return preserved_shas
+
 def rewrite_history(path: Path, base_commit: Sha, patches: List[Sha]):
     # Create a rewritten history in the git repository at 'path',
     # cherry-picking 'patches' on top of 'base_commit'.
@@ -417,7 +468,8 @@ def main():
             stdout(f'overriding user configs in {to_path}')
             runc('git config user.name oss-history', cwd=to_path)
             runc('git config user.email bot', cwd=to_path)
-        rewrite_sha = rewrite_history(to_path, loot['upstream-commit'], loot['shas'])
+        shas = loot['shas'] if ARGS.keep_reverts else remove_reverts(loot['titles'], loot['shas'])
+        rewrite_sha = rewrite_history(to_path, loot['upstream-commit'], shas)
         check_history_rewrite(to_path, loot['ncs-commit'], rewrite_sha)
 
     all_good()
